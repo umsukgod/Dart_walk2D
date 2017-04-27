@@ -8,24 +8,109 @@ using namespace dart::dynamics;
 using namespace dart::math;
 
 
+class Controller
+{
+	public :
+	Controller(const SkeletonPtr& biped)
+	: mBiped(biped), mSpeed(0.0)
+	{
+		int nDofs = mBiped->getNumDofs();
+
+		mForces = Eigen::VectorXd::Zero(nDofs);
+
+		mKp = Eigen::MatrixXd::Identity(nDofs, nDofs);
+		mKd = Eigen::MatrixXd::Identity(nDofs, nDofs);
+
+		for(std::size_t i = 0; i < 20; ++i)
+		{
+			mKp(i, i) = 0.0;
+			mKd(i, i) = 0.0;
+		}
+
+		for(std::size_t i = 20; i < mBiped->getNumDofs(); ++i)
+		{
+			mKp(i, i) = 1000;
+			mKd(i, i) = 50;
+		}
+		std::cout<<biped->getIndexOf(biped->getDof("j_spine"))<<std::endl;
+
+		setTargetPositions(mBiped->getPositions());
+	}
+
+	void setTargetPositions(const Eigen::VectorXd& pose)
+	{
+		mTargetPositions = pose;
+	}
+	void clearForces()
+	{
+		mForces.setZero();
+	}
+
+	  /// Add commanind forces from Stable-PD controllers (Lesson 3 Answer)
+	void addSPDForces()
+	{
+		Eigen::VectorXd q = mBiped->getPositions();
+		Eigen::VectorXd dq = mBiped->getVelocities();
+
+		Eigen::MatrixXd invM = (mBiped->getMassMatrix()
+			+ mKd * mBiped->getTimeStep()).inverse();
+		Eigen::VectorXd p =
+		-mKp * (q + dq * mBiped->getTimeStep() - mTargetPositions);
+		Eigen::VectorXd d = -mKd * dq;
+		Eigen::VectorXd qddot =
+		invM * (-mBiped->getCoriolisAndGravityForces()
+			+ p + d + mBiped->getConstraintForces());
+
+		mForces += p + d - mKd * qddot * mBiped->getTimeStep();
+		mBiped->setForces(mForces);
+	}
+
+protected:
+	/// The biped Skeleton that we will be controlling
+	SkeletonPtr mBiped;
+
+	/// Joint forces for the biped (output of the Controller)
+	Eigen::VectorXd mForces;
+
+	/// Control gains for the proportional error terms in the PD controller
+	Eigen::MatrixXd mKp;
+
+	/// Control gains for the derivative error terms in the PD controller
+	Eigen::MatrixXd mKd;
+
+	/// Target positions for the PD controllers
+	Eigen::VectorXd mTargetPositions;
+
+	/// For velocity actuator: Current speed of the skateboard
+	double mSpeed;
+};
+
 class MyWindow : public SimWindow
 {
-  public :
-  MyWindow(const WorldPtr& world)
-  : mForceCountDown(0), mPositiveSign(true)
-  {
-    setWorld(world);
-  }
+	public :
+	MyWindow(const WorldPtr& world)
+	: mForceCountDown(0), mPositiveSign(true)
+	{
+		setWorld(world);
 
-  void timeStepping() override
-  {
+		mController = dart::common::make_unique<Controller>(
+			mWorld->getSkeleton("biped"));
+	}
 
-    SimWindow::timeStepping();
-  }
+	void timeStepping() override
+	{
+		mController->clearForces();
+
+		mController->addSPDForces();
+
+		SimWindow::timeStepping();
+	}
 protected:
-  int mForceCountDown;
+	std::unique_ptr<Controller> mController;
 
-  bool mPositiveSign;
+	int mForceCountDown;
+
+	bool mPositiveSign;
 };
 
 SkeletonPtr createFloor()
@@ -41,7 +126,7 @@ SkeletonPtr createFloor()
 	std::shared_ptr<BoxShape> box(
 		new BoxShape(Eigen::Vector3d(floor_width, floor_height, floor_width)));
 	auto shapeNode
-		= body->createShapeNodeWith<VisualAspect, CollisionAspect, DynamicsAspect>(box);
+	= body->createShapeNodeWith<VisualAspect, CollisionAspect, DynamicsAspect>(box);
 	shapeNode->getVisualAspect()->setColor(dart::Color::Black());
 
 	Eigen::Isometry3d tf(Eigen::Isometry3d::Identity());
@@ -53,19 +138,21 @@ SkeletonPtr createFloor()
 
 SkeletonPtr loadBiped()
 {
-  WorldPtr world = SkelParser::readWorld("//home/gran/Dart/dart/data/skel/biped.skel");
-  assert (world != nullptr);
+	WorldPtr world = SkelParser::readWorld("//home/gran/Dart/dart/data/skel/biped.skel");
+	assert (world != nullptr);
 
-  SkeletonPtr biped = world->getSkeleton("biped");
+	SkeletonPtr biped = world->getSkeleton("biped");
 
-  for(size_t i=0;i<biped->getNumJoints();++i){
-  	biped->getJoint(i)->setPositionLimitEnforced(true);
-  }
+	for(size_t i=0;i<biped->getNumJoints();++i){
+		biped->getJoint(i)->setPositionLimitEnforced(true);
+	}
 
-  biped->enableSelfCollisionCheck();
+	biped->enableSelfCollisionCheck();
 
-  return biped;
+	return biped;
 }
+
+
 
 
 int main(int argc, char* argv[])
@@ -74,7 +161,7 @@ int main(int argc, char* argv[])
 	SkeletonPtr biped = loadBiped();
 
 	WorldPtr world = std::make_shared<World>();
-  	world->setGravity(Eigen::Vector3d(0.0, -9.81, 0.0));
+	world->setGravity(Eigen::Vector3d(0.0, -9.81, 0.0));
 
 	world->addSkeleton(floor);
 	world->addSkeleton(biped);
