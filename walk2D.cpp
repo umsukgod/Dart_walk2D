@@ -51,13 +51,33 @@ SkeletonPtr createFloor()
 	return floor;
 }
 
+SkeletonPtr loadBiped()
+{
+  WorldPtr world = SkelParser::readWorld("//home/gran/Dart/dart/data/skel/biped.skel");
+  assert (world != nullptr);
+
+  SkeletonPtr biped = world->getSkeleton("biped");
+
+  for(size_t i=0;i<biped->getNumJoints();++i){
+  	biped->getJoint(i)->setPositionLimitEnforced(true);
+  }
+
+  biped->enableSelfCollisionCheck();
+
+  return biped;
+}
+
 
 int main(int argc, char* argv[])
 {
 	SkeletonPtr floor = createFloor();
+	SkeletonPtr biped = loadBiped();
 
 	WorldPtr world = std::make_shared<World>();
+  	world->setGravity(Eigen::Vector3d(0.0, -9.81, 0.0));
+
 	world->addSkeleton(floor);
+	world->addSkeleton(biped);
 
 	MyWindow window(world);
 
